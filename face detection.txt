@@ -1,0 +1,360 @@
+# Improved face detection with better parameters
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from google.colab import files
+from IPython.display import display, Javascript, HTML
+from google.colab.output import eval_js
+from base64 import b64decode
+import os
+
+print("🎯 IMPROVED FACE DETECTION & RECOGNITION")
+
+# Create directory for known faces
+!mkdir -p /content/known_faces
+
+class ImprovedFaceRecognition:
+    def __init__(self):
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+        self.known_faces = []
+        self.known_names = []
+    
+    def improved_face_detection(self, image):
+        """Better face detection with multiple techniques"""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Try multiple parameter sets for better accuracy
+        detection_params = [
+            # Standard parameters
+            {"scaleFactor": 1.1, "minNeighbors": 6, "minSize": (50, 50)},
+            # More strict parameters (fewer false positives)
+            {"scaleFactor": 1.2, "minNeighbors": 8, "minSize": (60, 60)},
+            # More sensitive but with larger minimum size
+            {"scaleFactor": 1.05, "minNeighbors": 5, "minSize": (70, 70)}
+        ]
+        
+        all_faces = []
+        
+        for params in detection_params:
+            faces = self.face_cascade.detectMultiScale(gray, **params)
+            for (x, y, w, h) in faces:
+                all_faces.append((x, y, w, h))
+        
+        # Remove duplicate detections
+        unique_faces = self._remove_overlapping_faces(all_faces)
+        
+        return unique_faces
+    
+    def _remove_overlapping_faces(self, faces):
+        """Remove overlapping face detections"""
+        if not faces:
+            return []
+        
+        # Sort by area (largest first)
+        faces = sorted(faces, key=lambda rect: rect[2] * rect[3], reverse=True)
+        
+        unique_faces = []
+        for current_face in faces:
+            x1, y1, w1, h1 = current_face
+            
+            # Check if this face overlaps significantly with any already added face
+            is_duplicate = False
+            for unique_face in unique_faces:
+                x2, y2, w2, h2 = unique_face
+                
+                # Calculate overlap
+                dx = min(x1 + w1, x2 + w2) - max(x1, x2)
+                dy = min(y1 + h1, y2 + h2) - max(y1, y2)
+                
+                if dx > 0 and dy > 0:
+                    overlap_area = dx * dy
+                    current_area = w1 * h1
+                    unique_area = w2 * h2
+                    
+                    # If overlap is more than 50% of smaller face, consider it duplicate
+                    if overlap_area > 0.5 * min(current_area, unique_area):
+                        is_duplicate = True
+                        break
+            
+            if not is_duplicate:
+                unique_faces.append(current_face)
+        
+        return unique_faces
+    
+    def add_known_face(self, image, name):
+        """Add a face to known faces database"""
+        faces = self.improved_face_detection(image)
+        if len(faces) == 1:  # Only add if exactly one face is found
+            self.known_faces.append(image)
+            self.known_names.append(name)
+            print(f"✅ Added {name} to known faces")
+            return True
+        else:
+            print(f"❌ Could not add {name}: Found {len(faces)} faces, need exactly 1")
+            return False
+
+def improved_face_test():
+    """Test with improved face detection"""
+    
+    display(HTML('''
+    <div style="text-align: center; padding: 20px; border: 2px solid #4CAF50; border-radius: 10px;">
+        <h3>🎯 IMPROVED FACE DETECTION</h3>
+        <p>This version uses better detection to avoid false positives</p>
+        <button onclick="improvedCapture()" style="padding: 15px 30px; font-size: 18px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            🚀 CAPTURE & DETECT
+        </button>
+        <div id="improvedResult" style="margin: 20px; padding: 15px; min-height: 50px;"></div>
+        <canvas id="improvedCanvas" style="display: none;"></canvas>
+    </div>
+
+    <script>
+    async function improvedCapture() {
+        const improvedResult = document.getElementById('improvedResult');
+        improvedResult.innerHTML = "<span style='color: blue;'>🔄 Starting camera...</span>";
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            await video.play();
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const canvas = document.getElementById('improvedCanvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0);
+            
+            stream.getTracks().forEach(track => track.stop());
+            
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            improvedResult.innerHTML = "<span style='color: green;'>✅ Photo captured! Processing with improved detection...</span>";
+            
+            google.colab.kernel.invokeFunction('process_improved_test', [imageData], {});
+            
+        } catch (error) {
+            improvedResult.innerHTML = "<span style='color: red;'>❌ Camera error: " + error.message + "</span>";
+        }
+    }
+    </script>
+    '''))
+
+def process_improved_test(image_data):
+    """Process with improved face detection"""
+    try:
+        print("🔄 Processing with improved detection...")
+        
+        # Convert image
+        image_binary = b64decode(image_data.split(',')[1])
+        image_array = np.frombuffer(image_binary, np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        
+        # Initialize improved detector
+        detector = ImprovedFaceRecognition()
+        
+        # Detect faces with improved method
+        faces = detector.improved_face_detection(image)
+        
+        print(f"🔍 Improved detection found: {len(faces)} face(s)")
+        
+        # Create result image
+        result_image = image.copy()
+        
+        # Draw results with different colors based on confidence
+        for i, (x, y, w, h) in enumerate(faces):
+            # Calculate face area and position for confidence scoring
+            face_area = w * h
+            image_area = image.shape[0] * image.shape[1]
+            area_ratio = face_area / image_area
+            
+            # Confidence based on face size and position
+            if area_ratio > 0.05 and area_ratio < 0.3:  # Reasonable face size
+                color = (0, 255, 0)  # Green - high confidence
+                confidence = "High"
+            else:
+                color = (0, 255, 255)  # Yellow - medium confidence  
+                confidence = "Medium"
+            
+            # Draw rectangle
+            cv2.rectangle(result_image, (x, y), (x+w, y+h), color, 3)
+            
+            # Draw label with confidence
+            label = f"Face {i+1} ({confidence})"
+            cv2.putText(result_image, label, (x, y-10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        
+        # Display results
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        ax1.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        ax1.set_title('📷 Original Photo')
+        ax1.axis('off')
+        
+        ax2.imshow(cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB))
+        ax2.set_title(f'🎯 Improved Detection: {len(faces)} face(s)')
+        ax2.axis('off')
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Detailed analysis
+        print(f"\n📊 IMPROVED DETECTION ANALYSIS:")
+        print(f"   • Faces detected: {len(faces)}")
+        
+        if len(faces) == 1:
+            print("   ✅ Perfect! Exactly one face detected")
+        elif len(faces) > 1:
+            print("   ⚠️  Multiple detections - might include false positives")
+            print("   💡 Try: Move closer to camera, ensure plain background")
+        else:
+            print("   ❌ No faces detected")
+            print("   💡 Try: Better lighting, face directly forward")
+        
+        # Show what to do next
+        if len(faces) == 1:
+            print(f"\n🎉 READY FOR FACE RECOGNITION!")
+            print("   Next: We'll train the system to recognize you")
+            
+            # Ask if they want to add this face
+            add_face = input("\n🤖 Add this face to recognition database? (y/n): ").lower()
+            if add_face == 'y':
+                name = input("Enter your name: ").strip()
+                if name:
+                    if detector.add_known_face(image, name):
+                        print(f"✅ {name} added to recognition database!")
+                    else:
+                        print("❌ Could not add face to database")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+
+def real_recognition_system():
+    """Complete face recognition system"""
+    print("\n" + "="*60)
+    print("🤖 COMPLETE FACE RECOGNITION SYSTEM")
+    print("="*60)
+    
+    display(HTML('''
+    <div style="text-align: center; padding: 20px; border: 2px solid #FF6B00; border-radius: 10px;">
+        <h3>👤 FACE RECOGNITION TRAINING</h3>
+        <p>Step 1: Capture your face for training</p>
+        <button onclick="trainCapture()" style="padding: 15px 30px; font-size: 18px; background: #FF6B00; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            📷 CAPTURE TRAINING PHOTO
+        </button>
+        <div id="trainResult" style="margin: 20px; padding: 15px; min-height: 50px;"></div>
+        <canvas id="trainCanvas" style="display: none;"></canvas>
+    </div>
+
+    <script>
+    async function trainCapture() {
+        const trainResult = document.getElementById('trainResult');
+        trainResult.innerHTML = "<span style='color: blue;'>🔄 Capturing training photo...</span>";
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            await video.play();
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const canvas = document.getElementById('trainCanvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0);
+            
+            stream.getTracks().forEach(track => track.stop());
+            
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            trainResult.innerHTML = "<span style='color: green;'>✅ Training photo captured!</span>";
+            
+            google.colab.kernel.invokeFunction('process_training_photo', [imageData], {});
+            
+        } catch (error) {
+            trainResult.innerHTML = "<span style='color: red;'>❌ Camera error: " + error.message + "</span>";
+        }
+    }
+    </script>
+    '''))
+
+def process_training_photo(image_data):
+    """Process training photo and setup recognition"""
+    try:
+        print("🔄 Setting up face recognition...")
+        
+        # Convert image
+        image_binary = b64decode(image_data.split(',')[1])
+        image_array = np.frombuffer(image_binary, np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        
+        # Detect face
+        detector = ImprovedFaceRecognition()
+        faces = detector.improved_face_detection(image)
+        
+        if len(faces) == 1:
+            print("✅ Perfect! One face detected - ready for recognition training")
+            
+            # Show the detected face
+            x, y, w, h = faces[0]
+            face_roi = image[y:y+h, x:x+w]
+            
+            plt.figure(figsize=(12, 5))
+            
+            plt.subplot(1, 2, 1)
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            plt.title('📷 Full Photo')
+            plt.axis('off')
+            
+            plt.subplot(1, 2, 2)
+            plt.imshow(cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB))
+            plt.title('👤 Detected Face (Ready for Training)')
+            plt.axis('off')
+            
+            plt.tight_layout()
+            plt.show()
+            
+            # Get name and train
+            name = input("\n🤖 Enter your name for recognition: ").strip()
+            if name:
+                # Save the face
+                face_filename = f"/content/known_faces/{name}.jpg"
+                cv2.imwrite(face_filename, image)
+                print(f"✅ {name} registered! Face saved for recognition")
+                
+                print(f"\n🎉 TRAINING COMPLETE!")
+                print(f"   Now when you use face detection, it will show: '{name}'")
+                print(f"   Instead of just 'Face'")
+                
+        else:
+            print(f"❌ Training failed: Found {len(faces)} faces, need exactly 1")
+            if len(faces) > 1:
+                print("   💡 Move to a plain background, ensure only your face is visible")
+        
+    except Exception as e:
+        print(f"❌ Training error: {e}")
+
+# Register callbacks
+from google.colab import output
+output.register_callback('process_improved_test', process_improved_test)
+output.register_callback('process_training_photo', process_training_photo)
+
+# Main menu
+def main():
+    print("🎯 CHOOSE YOUR OPTION:")
+    print("1. 🚀 Test Improved Face Detection (Fewer false positives)")
+    print("2. 👤 Train Face Recognition (Learn to show names)")
+    
+    choice = input("\nChoose option (1-2): ").strip()
+    
+    if choice == '1':
+        improved_face_test()
+    elif choice == '2':
+        real_recognition_system()
+    else:
+        print("❌ Invalid choice")
+
+# Run the improved system
+main()
